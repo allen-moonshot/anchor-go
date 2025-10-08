@@ -98,22 +98,24 @@ func (g *Generator) gen_instructions() (*OutputFile, error) {
 						returnsCode.Qual(PkgSolanaGo, "Instruction")
 						returnsCode.Error()
 					}).BlockFunc(func(body *Group) {
-					if len(instruction.Args) > 0 {
-						body.Id("buf__").Op(":=").New(Qual("bytes", "Buffer"))
-						body.Id("enc__").Op(":=").Qual(PkgBinary, "NewBorshEncoder").Call(Id("buf__"))
+					// Always create buffer and encoder for discriminator
+					body.Id("buf__").Op(":=").New(Qual("bytes", "Buffer"))
+					body.Id("enc__").Op(":=").Qual(PkgBinary, "NewBorshEncoder").Call(Id("buf__"))
 
-						{
-							// write the discriminator
-							body.Line().Comment("Encode the instruction discriminator.")
-							discriminatorName := FormatInstructionDiscriminatorName(instruction.Name)
-							body.Err().Op(":=").Id("enc__").Dot("WriteBytes").Call(Id(discriminatorName).Index(Op(":")), False())
-							body.If(Err().Op("!=").Nil()).Block(
-								Return(
-									Nil(),
-									Qual("fmt", "Errorf").Call(Lit("failed to write instruction discriminator: %w"), Err()),
-								),
-							)
-						}
+					{
+						// write the discriminator
+						body.Line().Comment("Encode the instruction discriminator.")
+						discriminatorName := FormatInstructionDiscriminatorName(instruction.Name)
+						body.Err().Op(":=").Id("enc__").Dot("WriteBytes").Call(Id(discriminatorName).Index(Op(":")), False())
+						body.If(Err().Op("!=").Nil()).Block(
+							Return(
+								Nil(),
+								Qual("fmt", "Errorf").Call(Lit("failed to write instruction discriminator: %w"), Err()),
+							),
+						)
+					}
+
+					if len(instruction.Args) > 0 {
 						// for _, param := range instruction.Args {
 						// 	paramName := formatParamName(param.Name)
 						// 	isComplexEnum(param.Ty)
@@ -222,11 +224,7 @@ func (g *Generator) gen_instructions() (*OutputFile, error) {
 									ListMultiline(func(gg *Group) {
 										gg.Id("ProgramID")
 										gg.Id("accounts__")
-										if len(instruction.Args) > 0 {
-											gg.Id("buf__").Dot("Bytes").Call()
-										} else {
-											gg.Nil() // No arguments to encode.
-										}
+										gg.Id("buf__").Dot("Bytes").Call() // Always include discriminator
 									}),
 								)
 							},
@@ -346,14 +344,22 @@ func formatAccountCommentDocs(index int, account *idl.IdlInstructionAccount) str
 func (g *Generator) gen_instructionParser(typeNames []string, discriminatorNames []string) (Code, error) {
 	code := Empty()
 
+	// Generate Parsable interface (base interface for both events and instructions)
+	code.Line().Line()
+	code.Comment("Parsable interface defines common methods for types that can be parsed from binary data")
+	code.Line()
+	code.Type().Id("Parsable").Interface(
+		Id("GetDiscriminator").Params().Params(Index().Byte()),
+		Line(),
+		Id("UnmarshalWithDecoder").Params(Id("decoder").Op("*").Qual(PkgBinary, "Decoder")).Params(Error()),
+	)
+
 	// Generate Instruction interface
 	code.Line().Line()
 	code.Comment("Instruction interface defines common methods for all instruction types")
 	code.Line()
 	code.Type().Id("Instruction").Interface(
-		Id("GetDiscriminator").Params().Params(Index().Byte()),
-		Line(),
-		Id("UnmarshalWithDecoder").Params(Id("decoder").Op("*").Qual(PkgBinary, "Decoder")).Params(Error()),
+		Id("Parsable"),
 		Line(),
 		Id("UnmarshalAccountIndices").Params(Id("buf").Index().Byte()).Params(Index().Uint8(), Error()),
 		Line(),
@@ -465,6 +471,33 @@ func (g *Generator) gen_instructionParser(typeNames []string, discriminatorNames
 		Block(
 			Return(Id("ParseInstruction").Call(Id("instructionData"), Id("accountIndicesData"), Id("accountKeys"))),
 		)
+
+	// Unified parser for both instructions and events
+	code.Line().Line()
+	code.Comment("ParseParsable attempts to parse data as either an instruction or an event").Line()
+	code.Comment("This is useful when parsing inner instructions that may be events (from emit_cpi!)")
+	code.Line()
+	code.Func().Id("ParseParsable").
+		Params(
+			Id("data").Index().Byte(),
+		).
+		Params(Id("Parsable"), Error()).
+		BlockFunc(func(block *Group) {
+			block.Comment("Try parsing as instruction first")
+			block.List(Id("instruction"), Id("err")).Op(":=").Id("ParseInstructionWithoutAccounts").Call(Id("data"))
+			block.If(Id("err").Op("==").Nil()).Block(
+				Return(Id("instruction"), Nil()),
+			)
+
+			block.Comment("If instruction parsing failed, try parsing as event")
+			block.List(Id("event"), Id("err")).Op(":=").Id("ParseEvent").Call(Id("data"))
+			block.If(Id("err").Op("==").Nil()).Block(
+				Return(Id("event"), Nil()),
+			)
+
+			block.Comment("If both failed, return error")
+			block.Return(Nil(), Qual("fmt", "Errorf").Call(Lit("failed to parse data as either instruction or event")))
+		})
 
 	return code, nil
 }
