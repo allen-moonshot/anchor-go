@@ -579,6 +579,11 @@ func (g *Generator) gen_instructionType(instruction idl.IdlInstruction) (Code, e
 			Return(Id(FormatInstructionDiscriminatorName(tools.ToCamelUpper(instruction.Name))).Index(Op(":"))),
 		)
 
+	getterSpecs := getterSpecsFromInstruction(instruction)
+	if len(getterSpecs) > 0 {
+		code.Add(genGetterMethods(typeName, getterSpecs))
+	}
+
 	// Generate UnmarshalWithDecoder method
 	code.Line().Line()
 	code.Commentf("UnmarshalWithDecoder unmarshals the %s from Borsh-encoded bytes prefixed with its discriminator.", typeName).Line()

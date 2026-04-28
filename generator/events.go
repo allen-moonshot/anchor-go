@@ -160,6 +160,15 @@ func (g *Generator) gen_eventType(event idl.IdlEvent) (Code, error) {
 			Return(Id(FormatEventDiscriminatorName(eventName)).Index(Op(":"))),
 		)
 
+	if eventTypeDef != nil {
+		if eventStruct, ok := eventTypeDef.Ty.(*idl.IdlTypeDefTyStruct); ok {
+			getterSpecs := getterSpecsFromDefinedFields(eventStruct.Fields)
+			if len(getterSpecs) > 0 {
+				code.Add(genGetterMethods(eventName, getterSpecs))
+			}
+		}
+	}
+
 	// Generate UnmarshalWithDecoder method if type definition doesn't exist
 	// (if it exists, it's already generated in types.go)
 	if eventTypeDef == nil {
