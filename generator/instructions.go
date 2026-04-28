@@ -317,7 +317,7 @@ func newInstructionFuncName(instructionName string) string {
 
 func formatAccountCommentDocs(index int, account *idl.IdlInstructionAccount) string {
 	buf := new(strings.Builder)
-	_, _ = fmt.Fprintf(buf, "Account %d %q", index, account.Name)
+	buf.WriteString(fmt.Sprintf("Account %d %q", index, account.Name))
 	buf.WriteString(": ")
 	if account.Writable {
 		buf.WriteString("Writable")
@@ -335,7 +335,7 @@ func formatAccountCommentDocs(index int, account *idl.IdlInstructionAccount) str
 		buf.WriteString(", Required")
 	}
 	if account.Address.IsSome() && !account.Address.Unwrap().IsZero() {
-		_, _ = fmt.Fprintf(buf, ", Address: %s", account.Address.Unwrap().String())
+		buf.WriteString(fmt.Sprintf(", Address: %s", account.Address.Unwrap().String()))
 	}
 	// TODO: Handle PDA and Relations
 	return buf.String()
