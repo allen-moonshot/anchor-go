@@ -349,6 +349,8 @@ func (g *Generator) gen_instructionParser(typeNames []string, discriminatorNames
 	code.Comment("Parsable interface defines common methods for types that can be parsed from binary data")
 	code.Line()
 	code.Type().Id("Parsable").Interface(
+		Id("GetName").Params().Params(String()),
+		Line(),
 		Id("GetDiscriminator").Params().Params(Index().Byte()),
 		Line(),
 		Id("UnmarshalWithDecoder").Params(Id("decoder").Op("*").Qual(PkgBinary, "Decoder")).Params(Error()),
@@ -577,6 +579,14 @@ func (g *Generator) gen_instructionType(instruction idl.IdlInstruction) (Code, e
 		Params(Index().Byte()).
 		Block(
 			Return(Id(FormatInstructionDiscriminatorName(tools.ToCamelUpper(instruction.Name))).Index(Op(":"))),
+		)
+
+	code.Line().Line()
+	code.Func().Params(Id("obj").Op("*").Id(typeName)).Id("GetName").
+		Params().
+		String().
+		Block(
+			Return(Lit(instruction.Name)),
 		)
 
 	getterSpecs := getterSpecsFromInstruction(instruction)

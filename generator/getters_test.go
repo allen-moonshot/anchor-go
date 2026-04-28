@@ -33,6 +33,7 @@ func TestGenInstructionTypeGeneratesGetters(t *testing.T) {
 	require.NoError(t, err)
 
 	generated := renderGeneratedCode(t, code)
+	assert.Contains(t, generated, "func (obj *TransferInstruction) GetName() string")
 	assert.Contains(t, generated, "func (obj *TransferInstruction) GetAmount() uint64")
 	assert.Contains(t, generated, "func (obj *TransferInstruction) GetMemo() string")
 	assert.Contains(t, generated, "func (obj *TransferInstruction) GetMemoPtr() *string")
@@ -80,6 +81,7 @@ func TestGenEventTypeGeneratesFieldGetters(t *testing.T) {
 	require.NoError(t, err)
 
 	generated := renderGeneratedCode(t, code)
+	assert.Contains(t, generated, "func (obj *TransferEvent) GetName() string")
 	assert.Contains(t, generated, "func (obj *TransferEvent) GetAmount() uint64")
 	assert.Contains(t, generated, "func (obj *TransferEvent) GetAuthority() solanago.PublicKey")
 	assert.Contains(t, generated, "func (obj *TransferEvent) GetAuthorityPtr() *solanago.PublicKey")
@@ -93,6 +95,7 @@ func TestGenEventParserUsesTypedHelper(t *testing.T) {
 	require.NoError(t, err)
 
 	generated := renderGeneratedCode(t, code)
+	assert.Contains(t, generated, "func ParseAnyEvent(eventData []byte) (Event, error)")
 	assert.Contains(t, generated, "func ParseEventTyped[T Event](eventData []byte) (T, error)")
 	assert.Contains(t, generated, "return ParseEventTyped[*TransferEvent](eventData)")
 }

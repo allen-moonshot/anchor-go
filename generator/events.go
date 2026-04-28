@@ -55,6 +55,17 @@ func (g *Generator) gen_eventParser(eventNames []string) (Code, error) {
 		Id("Parsable"),
 	)
 
+	code.Line().Line()
+	code.Comment("ParseAnyEvent parses event data into any known event type")
+	code.Comment("Deprecated: use ParseEvent instead.")
+	code.Line()
+	code.Func().Id("ParseAnyEvent").
+		Params(Id("eventData").Index().Byte()).
+		Params(Id("Event"), Error()).
+		Block(
+			Return(Id("ParseEvent").Call(Id("eventData"))),
+		)
+
 	// Generate ParseEvent function
 	code.Line().Line()
 	{
@@ -158,6 +169,14 @@ func (g *Generator) gen_eventType(event idl.IdlEvent) (Code, error) {
 		Params(Index().Byte()).
 		Block(
 			Return(Id(FormatEventDiscriminatorName(eventName)).Index(Op(":"))),
+		)
+
+	code.Line().Line()
+	code.Func().Params(Id("obj").Op("*").Id(eventName)).Id("GetName").
+		Params().
+		String().
+		Block(
+			Return(Lit(event.Name)),
 		)
 
 	if eventTypeDef != nil {
