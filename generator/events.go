@@ -55,6 +55,21 @@ func (g *Generator) gen_eventParser(eventNames []string) (Code, error) {
 		Id("Parsable"),
 	)
 
+	// AnchorEmitCPIDiscriminator is the 8-byte sentinel that Anchor's emit_cpi!
+	// macro prepends to event data when an event is emitted as an inner CPI
+	// instruction. Anchor stores the discriminator as a u64 (0x1d9acb512ea545e4)
+	// and emits it on the wire as little-endian bytes; that's what we match
+	// here. Consumers that read inner-instruction data off-chain need this to
+	// strip the prefix before calling ParseEvent.
+	code.Line().Line()
+	code.Comment("AnchorEmitCPIDiscriminator is the 8-byte sentinel that Anchor's emit_cpi! macro")
+	code.Comment("prepends to event data when emitting events as inner CPI instructions.")
+	code.Comment("It mirrors anchor-lang's EVENT_IX_TAG_LE constant. See ParseEmitCPIEvent.")
+	code.Line()
+	code.Var().Id("AnchorEmitCPIDiscriminator").Op("=").Index(Lit(8)).Byte().Values(
+		Lit(228), Lit(69), Lit(165), Lit(46), Lit(81), Lit(203), Lit(154), Lit(29),
+	)
+
 	// ParseAnyEvent is retained as a backward-compatible alias for ParseEvent
 	// so existing internal callers (and any downstream consumers of the older
 	// surface) keep compiling. We use godoc's "Deprecated:" marker, with the
@@ -67,10 +82,14 @@ func (g *Generator) gen_eventParser(eventNames []string) (Code, error) {
 	code.Line()
 	code.Func().Id("ParseAnyEvent").
 		Params(Id("eventData").Index().Byte()).
-		Params(Id("Event"), Error()).
-		Block(
-			Return(Id("ParseEvent").Call(Id("eventData"))),
-		)
+		Params(Any(), Error()).
+		BlockFunc(func(block *Group) {
+			// Preserve the historical (any, error) signature: assign to a typed
+			// local first so the implicit Event->any conversion happens during
+			// assignment rather than in a multi-value return tuple (which Go rejects).
+			block.List(Id("event"), Id("err")).Op(":=").Id("ParseEvent").Call(Id("eventData"))
+			block.Return(Id("event"), Id("err"))
+		})
 
 	// Generate ParseEvent function. The discriminator error inside this
 	// function says "failed to read" rather than "failed to peek" because
@@ -136,6 +155,31 @@ func (g *Generator) gen_eventParser(eventNames []string) (Code, error) {
 			)
 			block.Return(Id("typed"), Nil())
 		})
+	// ParseEmitCPIEvent strips Anchor's emit_cpi! sentinel from the front of
+	// inner-instruction data before parsing as an event. Use this when reading
+	// events from on-chain transaction inner-instruction logs, where the
+	// payload is [AnchorEmitCPIDiscriminator || event_discriminator || borsh_payload].
+	code.Line().Line()
+	code.Comment("ParseEmitCPIEvent parses event data wrapped by Anchor's emit_cpi! macro.")
+	code.Comment("CPI-emitted event data is prefixed with AnchorEmitCPIDiscriminator; this")
+	code.Comment("strips the prefix and delegates to ParseEvent.")
+	code.Line()
+	code.Func().Id("ParseEmitCPIEvent").
+		Params(Id("data").Index().Byte()).
+		Params(Id("Event"), Error()).
+		BlockFunc(func(block *Group) {
+			block.If(Len(Id("data")).Op("<").Lit(8)).Block(
+				Return(Nil(), Qual("fmt", "Errorf").Call(Lit("emit_cpi event data too short: expected at least 8 bytes, got %d"), Len(Id("data")))),
+			)
+			block.If(Op("!").Qual("bytes", "Equal").Call(
+				Id("data").Index(Empty(), Lit(8)),
+				Id("AnchorEmitCPIDiscriminator").Index(Op(":")),
+			)).Block(
+				Return(Nil(), Qual("fmt", "Errorf").Call(Lit("data is not an anchor emit_cpi event (missing discriminator)"))),
+			)
+			block.Return(Id("ParseEvent").Call(Id("data").Index(Lit(8), Empty())))
+		})
+
 	// Per-event typed wrappers. We keep the historical ParseEvent_<Name>
 	// entry points so callers don't have to use generics; the actual parsing
 	// happens once inside ParseEventTyped above.

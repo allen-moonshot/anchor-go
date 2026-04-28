@@ -95,7 +95,27 @@ func TestGenEventParserUsesTypedHelper(t *testing.T) {
 	require.NoError(t, err)
 
 	generated := renderGeneratedCode(t, code)
-	assert.Contains(t, generated, "func ParseAnyEvent(eventData []byte) (Event, error)")
+	assert.Contains(t, generated, "func ParseAnyEvent(eventData []byte) (any, error)")
 	assert.Contains(t, generated, "func ParseEventTyped[T Event](eventData []byte) (T, error)")
 	assert.Contains(t, generated, "return ParseEventTyped[*TransferEvent](eventData)")
+
+	// emit_cpi compatibility surface: constant + dedicated helper.
+	assert.Contains(t, generated, "AnchorEmitCPIDiscriminator = [8]byte{228, 69, 165, 46, 81, 203, 154, 29}")
+	assert.Contains(t, generated, "func ParseEmitCPIEvent(data []byte) (Event, error)")
+	assert.Contains(t, generated, "!bytes.Equal(data[:8], AnchorEmitCPIDiscriminator[:])")
+	assert.Contains(t, generated, "return ParseEvent(data[8:])")
+}
+
+func TestGenInstructionParserStripsEmitCPIInParseParsable(t *testing.T) {
+	gen := NewGenerator(&idl.Idl{}, &GeneratorOptions{Package: "testpkg"})
+
+	code, err := gen.gen_instructionParser([]string{"FooInstruction"}, []string{"foo"})
+	require.NoError(t, err)
+
+	generated := renderGeneratedCode(t, code)
+	// ParseParsable should short-circuit on the emit_cpi sentinel before
+	// attempting the instruction/event fallback chain.
+	assert.Contains(t, generated, "func ParseParsable(data []byte) (Parsable, error)")
+	assert.Contains(t, generated, "len(data) >= 8 && bytes.Equal(data[:8], AnchorEmitCPIDiscriminator[:])")
+	assert.Contains(t, generated, "return ParseEvent(data[8:])")
 }

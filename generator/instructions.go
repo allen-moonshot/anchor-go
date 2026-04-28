@@ -491,6 +491,18 @@ func (g *Generator) gen_instructionParser(typeNames []string, discriminatorNames
 		).
 		Params(Id("Parsable"), Error()).
 		BlockFunc(func(block *Group) {
+			// If data is wrapped by Anchor's emit_cpi! macro, strip the sentinel and
+			// parse as event. emit_cpi events arrive as inner instructions whose data
+			// starts with AnchorEmitCPIDiscriminator; without this short-circuit the
+			// instruction-then-event fallback below would still work but would surface
+			// a misleading "unknown discriminator" error path.
+			block.Comment("If data is wrapped by Anchor's emit_cpi! macro, strip the sentinel and parse as event")
+			block.If(Len(Id("data")).Op(">=").Lit(8).Op("&&").Qual("bytes", "Equal").Call(
+				Id("data").Index(Empty(), Lit(8)),
+				Id("AnchorEmitCPIDiscriminator").Index(Op(":")),
+			)).Block(
+				Return(Id("ParseEvent").Call(Id("data").Index(Lit(8), Empty()))),
+			)
 			block.Comment("Try parsing as instruction first")
 			block.List(Id("instruction"), Id("instructionErr")).Op(":=").Id("ParseInstructionWithoutAccounts").Call(Id("data"))
 			block.If(Id("instructionErr").Op("==").Nil()).Block(
