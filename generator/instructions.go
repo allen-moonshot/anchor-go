@@ -317,7 +317,7 @@ func newInstructionFuncName(instructionName string) string {
 
 func formatAccountCommentDocs(index int, account *idl.IdlInstructionAccount) string {
 	buf := new(strings.Builder)
-	buf.WriteString(fmt.Sprintf("Account %d %q", index, account.Name))
+	_, _ = fmt.Fprintf(buf, "Account %d %q", index, account.Name)
 	buf.WriteString(": ")
 	if account.Writable {
 		buf.WriteString("Writable")
@@ -335,7 +335,7 @@ func formatAccountCommentDocs(index int, account *idl.IdlInstructionAccount) str
 		buf.WriteString(", Required")
 	}
 	if account.Address.IsSome() && !account.Address.Unwrap().IsZero() {
-		buf.WriteString(fmt.Sprintf(", Address: %s", account.Address.Unwrap().String()))
+		_, _ = fmt.Fprintf(buf, ", Address: %s", account.Address.Unwrap().String())
 	}
 	// TODO: Handle PDA and Relations
 	return buf.String()
@@ -483,20 +483,21 @@ func (g *Generator) gen_instructionParser(typeNames []string, discriminatorNames
 		).
 		Params(Id("Parsable"), Error()).
 		BlockFunc(func(block *Group) {
-			block.Comment("Try parsing as instruction first")
-			block.List(Id("instruction"), Id("err")).Op(":=").Id("ParseInstructionWithoutAccounts").Call(Id("data"))
-			block.If(Id("err").Op("==").Nil()).Block(
+			block.List(Id("instruction"), Id("instructionErr")).Op(":=").Id("ParseInstructionWithoutAccounts").Call(Id("data"))
+			block.If(Id("instructionErr").Op("==").Nil()).Block(
 				Return(Id("instruction"), Nil()),
 			)
-
-			block.Comment("If instruction parsing failed, try parsing as event")
-			block.List(Id("event"), Id("err")).Op(":=").Id("ParseEvent").Call(Id("data"))
-			block.If(Id("err").Op("==").Nil()).Block(
+			block.List(Id("event"), Id("eventErr")).Op(":=").Id("ParseEvent").Call(Id("data"))
+			block.If(Id("eventErr").Op("==").Nil()).Block(
 				Return(Id("event"), Nil()),
 			)
-
-			block.Comment("If both failed, return error")
-			block.Return(Nil(), Qual("fmt", "Errorf").Call(Lit("failed to parse data as either instruction or event")))
+			block.Return(
+				Nil(),
+				Qual("fmt", "Errorf").Call(
+					Lit("failed to parse data as either instruction or event: %w"),
+					Qual("errors", "Join").Call(Id("instructionErr"), Id("eventErr")),
+				),
+			)
 		})
 
 	return code, nil
@@ -592,7 +593,6 @@ func (g *Generator) gen_instructionType(instruction idl.IdlInstruction) (Code, e
 			}
 			{
 				// Read the discriminator and check it against the expected value
-				block.Comment("Read the discriminator and check it against the expected value:")
 				block.List(Id("discriminator"), Err()).Op(":=").Id("decoder").Dot("ReadDiscriminator").Call()
 				block.If(Err().Op("!=").Nil()).Block(
 					Return(Qual("fmt", "Errorf").Call(Lit("failed to read instruction discriminator for %s: %w"), Lit(typeName), Err())),

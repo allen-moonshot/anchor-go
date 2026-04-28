@@ -68,7 +68,7 @@ func (g *Generator) gen_eventParser(eventNames []string) (Code, error) {
 				block.If(Err().Op("!=").Nil()).Block(
 					Return(
 						Nil(),
-						Qual("fmt", "Errorf").Call(Lit("failed to peek event discriminator: %w"), Err()),
+						Qual("fmt", "Errorf").Call(Lit("failed to read event discriminator: %w"), Err()),
 					),
 				)
 
@@ -80,7 +80,7 @@ func (g *Generator) gen_eventParser(eventNames []string) (Code, error) {
 							If(Err().Op("!=").Nil()).Block(
 								Return(
 									Nil(),
-									Qual("fmt", "Errorf").Call(Lit("failed to unmarshal event as "+name+": %w"), Err()),
+									Qual("fmt", "Errorf").Call(Lit("failed to unmarshal event as %s: %w"), Lit(name), Err()),
 								),
 							),
 							Return(Id("value"), Nil()),
@@ -92,42 +92,34 @@ func (g *Generator) gen_eventParser(eventNames []string) (Code, error) {
 				})
 			})
 	}
+	code.Line().Line()
+	code.Comment("ParseEventTyped parses event data and returns a specific event type")
+	code.Comment("T must implement the Event interface")
+	code.Line()
+	code.Func().Id("ParseEventTyped").
+		Types(Id("T").Id("Event")).
+		Params(Id("eventData").Index().Byte()).
+		Params(Id("T"), Error()).
+		BlockFunc(func(block *Group) {
+			block.Id("event").Op(",").Id("err").Op(":=").Id("ParseEvent").Call(Id("eventData"))
+			block.If(Id("err").Op("!=").Nil()).Block(
+				Return(Op("*").New(Id("T")), Id("err")),
+			)
+			block.Id("typed").Op(",").Id("ok").Op(":=").Id("event").Assert(Id("T"))
+			block.If(Op("!").Id("ok")).Block(
+				Return(Op("*").New(Id("T")), Qual("fmt", "Errorf").Call(Lit("event is not of expected type"))),
+			)
+			block.Return(Id("typed"), Nil())
+		})
 	{
 		code.Line().Line()
-		// for each event, generate a function to parse it:
 		for _, name := range eventNames {
-			discriminatorName := FormatEventDiscriminatorName(name)
-
 			code.Func().Id("ParseEvent_"+name).
 				Params(Id("eventData").Index().Byte()).
 				Params(Op("*").Id(name), Error()).
-				BlockFunc(func(block *Group) {
-					block.Id("decoder").Op(":=").Qual(PkgBinary, "NewBorshDecoder").Call(Id("eventData"))
-					block.List(Id("discriminator"), Err()).Op(":=").Id("decoder").Dot("ReadDiscriminator").Call()
-
-					block.If(Err().Op("!=").Nil()).Block(
-						Return(
-							Nil(),
-							Qual("fmt", "Errorf").Call(Lit("failed to peek discriminator: %w"), Err()),
-						),
-					)
-
-					block.If(Id("discriminator").Op("!=").Id(discriminatorName)).Block(
-						Return(Nil(), Qual("fmt", "Errorf").Call(Lit("expected discriminator %v, got %s"), Id(discriminatorName), Qual(PkgBinary, "FormatDiscriminator").Call(Id("discriminator")))),
-					)
-
-					block.Id("event").Op(":=").New(Id(name))
-					block.Err().Op("=").Id("event").Dot("UnmarshalWithDecoder").Call(Id("decoder"))
-
-					block.If(Err().Op("!=").Nil()).Block(
-						Return(
-							Nil(),
-							Qual("fmt", "Errorf").Call(Lit("failed to unmarshal event of type "+name+": %w"), Err()),
-						),
-					)
-
-					block.Return(Id("event"), Nil())
-				})
+				Block(
+					Return(Id("ParseEventTyped").Types(Op("*").Id(name)).Call(Id("eventData"))),
+				)
 			code.Line().Line()
 		}
 	}
@@ -176,7 +168,6 @@ func (g *Generator) gen_eventType(event idl.IdlEvent) (Code, error) {
 			Params(Id("decoder").Op("*").Qual(PkgBinary, "Decoder")).
 			Params(Error()).
 			BlockFunc(func(block *Group) {
-				block.Comment("Read and validate discriminator")
 				block.List(Id("discriminator"), Err()).Op(":=").Id("decoder").Dot("ReadDiscriminator").Call()
 				block.If(Err().Op("!=").Nil()).Block(
 					Return(Qual("fmt", "Errorf").Call(Lit("failed to read event discriminator for %s: %w"), Lit(eventName), Err())),
@@ -191,7 +182,6 @@ func (g *Generator) gen_eventType(event idl.IdlEvent) (Code, error) {
 						),
 					),
 				)
-				block.Comment("No fields to unmarshal")
 				block.Return(Nil())
 			})
 	}
