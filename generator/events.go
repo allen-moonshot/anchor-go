@@ -55,8 +55,14 @@ func (g *Generator) gen_eventParser(eventNames []string) (Code, error) {
 		Id("Parsable"),
 	)
 
+	// ParseAnyEvent is retained as a backward-compatible alias for ParseEvent
+	// so existing internal callers (and any downstream consumers of the older
+	// surface) keep compiling. We use godoc's "Deprecated:" marker, with the
+	// recommended blank doc-comment line above it, so IDEs and `go doc`
+	// surface the migration hint to ParseEvent.
 	code.Line().Line()
-	code.Comment("ParseAnyEvent parses event data into any known event type")
+	code.Comment("ParseAnyEvent parses event data into any known event type.")
+	code.Comment("")
 	code.Comment("Deprecated: use ParseEvent instead.")
 	code.Line()
 	code.Func().Id("ParseAnyEvent").
@@ -66,7 +72,10 @@ func (g *Generator) gen_eventParser(eventNames []string) (Code, error) {
 			Return(Id("ParseEvent").Call(Id("eventData"))),
 		)
 
-	// Generate ParseEvent function
+	// Generate ParseEvent function. The discriminator error inside this
+	// function says "failed to read" rather than "failed to peek" because
+	// ReadDiscriminator advances the decoder; the previous "peek" wording
+	// would mislead anyone debugging from the error message.
 	code.Line().Line()
 	{
 		code.Func().Id("ParseEvent").
@@ -91,7 +100,7 @@ func (g *Generator) gen_eventParser(eventNames []string) (Code, error) {
 							If(Err().Op("!=").Nil()).Block(
 								Return(
 									Nil(),
-									Qual("fmt", "Errorf").Call(Lit("failed to unmarshal event as %s: %w"), Lit(name), Err()),
+									Qual("fmt", "Errorf").Call(Lit("failed to unmarshal event as "+name+": %w"), Err()),
 								),
 							),
 							Return(Id("value"), Nil()),
@@ -103,6 +112,11 @@ func (g *Generator) gen_eventParser(eventNames []string) (Code, error) {
 				})
 			})
 	}
+	// ParseEventTyped is the single dispatcher used by both the dynamic
+	// ParseEvent (above) and the typed ParseEvent_<Name> wrappers (below).
+	// Centralising the parse + type-assert logic here keeps the wrappers as
+	// one-liners and avoids duplicating discriminator/decoder bookkeeping
+	// per event.
 	code.Line().Line()
 	code.Comment("ParseEventTyped parses event data and returns a specific event type")
 	code.Comment("T must implement the Event interface")
@@ -122,6 +136,9 @@ func (g *Generator) gen_eventParser(eventNames []string) (Code, error) {
 			)
 			block.Return(Id("typed"), Nil())
 		})
+	// Per-event typed wrappers. We keep the historical ParseEvent_<Name>
+	// entry points so callers don't have to use generics; the actual parsing
+	// happens once inside ParseEventTyped above.
 	{
 		code.Line().Line()
 		for _, name := range eventNames {
@@ -171,6 +188,10 @@ func (g *Generator) gen_eventType(event idl.IdlEvent) (Code, error) {
 			Return(Id(FormatEventDiscriminatorName(eventName)).Index(Op(":"))),
 		)
 
+	// GetName emits the IDL-defined event name. Pairs with GetDiscriminator
+	// and satisfies the shared Parsable interface (see instructions.go).
+	// Letting callers identify a parsed Event by name avoids forcing them to
+	// type-switch over every concrete event type.
 	code.Line().Line()
 	code.Func().Params(Id("obj").Op("*").Id(eventName)).Id("GetName").
 		Params().
@@ -196,6 +217,7 @@ func (g *Generator) gen_eventType(event idl.IdlEvent) (Code, error) {
 			Params(Id("decoder").Op("*").Qual(PkgBinary, "Decoder")).
 			Params(Error()).
 			BlockFunc(func(block *Group) {
+				block.Comment("Read and validate discriminator")
 				block.List(Id("discriminator"), Err()).Op(":=").Id("decoder").Dot("ReadDiscriminator").Call()
 				block.If(Err().Op("!=").Nil()).Block(
 					Return(Qual("fmt", "Errorf").Call(Lit("failed to read event discriminator for %s: %w"), Lit(eventName), Err())),
@@ -210,6 +232,7 @@ func (g *Generator) gen_eventType(event idl.IdlEvent) (Code, error) {
 						),
 					),
 				)
+				block.Comment("No fields to unmarshal")
 				block.Return(Nil())
 			})
 	}

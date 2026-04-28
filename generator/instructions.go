@@ -349,6 +349,9 @@ func (g *Generator) gen_instructionParser(typeNames []string, discriminatorNames
 	code.Comment("Parsable interface defines common methods for types that can be parsed from binary data")
 	code.Line()
 	code.Type().Id("Parsable").Interface(
+		// GetName lets callers identify a parsed value (event or instruction)
+		// by its IDL name without a type switch. Placed on the shared interface
+		// so any consumer of Parsable can rely on it.
 		Id("GetName").Params().Params(String()),
 		Line(),
 		Id("GetDiscriminator").Params().Params(Index().Byte()),
@@ -474,7 +477,10 @@ func (g *Generator) gen_instructionParser(typeNames []string, discriminatorNames
 			Return(Id("ParseInstruction").Call(Id("instructionData"), Id("accountIndicesData"), Id("accountKeys"))),
 		)
 
-	// Unified parser for both instructions and events
+	// Unified parser for both instructions and events. We preserve both parse
+	// errors via errors.Join so callers see the instruction AND event failure
+	// rather than just one; useful when an inner instruction is actually an
+	// emit_cpi! event and we want both contexts in the wrapped error.
 	code.Line().Line()
 	code.Comment("ParseParsable attempts to parse data as either an instruction or an event").Line()
 	code.Comment("This is useful when parsing inner instructions that may be events (from emit_cpi!)")
@@ -485,14 +491,17 @@ func (g *Generator) gen_instructionParser(typeNames []string, discriminatorNames
 		).
 		Params(Id("Parsable"), Error()).
 		BlockFunc(func(block *Group) {
+			block.Comment("Try parsing as instruction first")
 			block.List(Id("instruction"), Id("instructionErr")).Op(":=").Id("ParseInstructionWithoutAccounts").Call(Id("data"))
 			block.If(Id("instructionErr").Op("==").Nil()).Block(
 				Return(Id("instruction"), Nil()),
 			)
+			block.Comment("If instruction parsing failed, try parsing as event")
 			block.List(Id("event"), Id("eventErr")).Op(":=").Id("ParseEvent").Call(Id("data"))
 			block.If(Id("eventErr").Op("==").Nil()).Block(
 				Return(Id("event"), Nil()),
 			)
+			block.Comment("If both failed, return both errors via errors.Join so the caller can diagnose which shape was expected")
 			block.Return(
 				Nil(),
 				Qual("fmt", "Errorf").Call(
@@ -581,6 +590,9 @@ func (g *Generator) gen_instructionType(instruction idl.IdlInstruction) (Code, e
 			Return(Id(FormatInstructionDiscriminatorName(tools.ToCamelUpper(instruction.Name))).Index(Op(":"))),
 		)
 
+	// GetName emits the IDL-defined instruction name. Same rationale as the
+	// event GetName: lets consumers identify or log an instruction without a
+	// type assertion against every concrete instruction type.
 	code.Line().Line()
 	code.Func().Params(Id("obj").Op("*").Id(typeName)).Id("GetName").
 		Params().
@@ -608,6 +620,7 @@ func (g *Generator) gen_instructionType(instruction idl.IdlInstruction) (Code, e
 			}
 			{
 				// Read the discriminator and check it against the expected value
+				block.Comment("Read the discriminator and check it against the expected value:")
 				block.List(Id("discriminator"), Err()).Op(":=").Id("decoder").Dot("ReadDiscriminator").Call()
 				block.If(Err().Op("!=").Nil()).Block(
 					Return(Qual("fmt", "Errorf").Call(Lit("failed to read instruction discriminator for %s: %w"), Lit(typeName), Err())),
